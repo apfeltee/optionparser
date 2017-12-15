@@ -1,0 +1,10 @@
+*.exe
+*.obj
+*.o
+*.stackdump
+*.dump
+*.dmp
+*.core
+*.lib
+*.a
+*.dll
