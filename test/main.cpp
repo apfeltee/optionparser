@@ -4,7 +4,7 @@
 
 struct options
 {
-    bool verbose = false;
+    int verbosity = 0;
     std::string outfile = "a.out";
 };
 
@@ -13,12 +13,12 @@ int main(int argc, char* argv[])
     int i;
     options opts;
     optionparser prs(argc, argv);
-    prs.on("-v", "--verbose", "toggle verbose", [&](auto)
+    prs.on("-v", "--verbose", "increase verbosity (try passing '-v' several times!)", [&]
     {
-        std::cout << "** toggling verbose" << std::endl;
-        opts.verbose = true;
+        opts.verbosity++;
+        std::cout << "** verbosity is now " << opts.verbosity << std::endl;
     });
-    prs.on("-d", "--debug", "toggle debug mose", [&](auto)
+    prs.on("-d", "--debug", "toggle debug mose", [&]
     {
         std::cout << "** toggling debug mode" << std::endl;
     });
@@ -35,9 +35,9 @@ int main(int argc, char* argv[])
     {
         prs.parse();
         auto pos = prs.positional();
-        if(pos.size() == 0)
+        if((pos.size() == 0) && (argc == 1))
         {
-            prs.help(std::cout, argv[0]);
+            prs.help(std::cout);
             return 1;
         }
         else

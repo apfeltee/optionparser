@@ -10,7 +10,6 @@
 #include <exception>
 #include <stdexcept>
 
-
 /*
 * optionparser borrows the style of ruby's OptionParser, in that it
 * uses callbacks. this makes it trivial to implement invocation of
@@ -41,8 +40,51 @@
 class optionparser
 {
     public:
-        using Callback = std::function<void(const std::string&)>;
+        using CallbackNoValue  = std::function<void()>;
+        using CallbackStrValue = std::function<void(const std::string&)>;
+        
 
+        // some kind of bad variant type. or call it a hack.
+        struct Callback
+        {
+            CallbackNoValue real_noval = nullptr;
+            CallbackStrValue real_strval = nullptr;
+
+            Callback()
+            {
+            }
+
+            Callback(CallbackStrValue cb)
+            {
+                real_strval = cb;
+            }
+
+            Callback(CallbackNoValue cb)
+            {
+                real_noval = cb;
+            }
+
+            void invoke() const
+            {
+                if(real_noval == nullptr)
+                {
+                    throw std::runtime_error("real_noval is NULL");
+                }
+                return real_noval();
+            }
+
+            void invoke(const std::string& s)
+            {
+                if(real_strval == nullptr)
+                {
+                    throw std::runtime_error("real_strval is NULL");
+                }
+                return real_strval(s);
+            }
+        };
+
+        // idea: use vectors, to support more option variations.
+        // right now this can be done by sharing a lambda object.
         struct Declaration
         {
             // whether or not this decl has a short option (wip)
@@ -57,22 +99,59 @@ class optionparser
             bool needvalue = false;
 
             // the raw short option syntax string. (i.e., "-o?")
-            std::string shortstr = "";
+            std::string shortstr;
 
             // the raw long option syntax string. (i.e., "--out=?")
-            std::string longstr = "";
+            std::string longstr;
 
             // the name of the short option (i.e., "o")
-            std::string shortname = "";
+            char shortname;
 
             // the name of the long option (i.e., "out")
-            std::string longname = "";
+            std::string longname;
 
             // the description (no special syntax!) (i.e., "set output file name")
-            std::string description = "";
+            std::string description;
 
             // the lambda/function to be called when this option is seen
             Callback callback;
+
+            Declaration()
+            {
+            }
+
+            bool is(char c) const
+            {
+                return (c == shortname);
+            }
+
+            bool is(const std::string& s) const
+            {
+                return (s == longname);
+            }
+
+            std::string to_short_str() const
+            {
+                std::stringstream buf;
+                buf
+                    << "-" << shortname << (needvalue ? "<val>" : "")
+                ;
+                return buf.str();
+            }
+
+            std::string to_long_str(int padsize=25) const
+            {
+                std::stringstream buf;
+                buf
+                    << "    -" << shortname << (needvalue ? "<val>" : "")
+                    << ", "
+                    << " --" << longname << (needvalue ? "=<val>" : "")
+                    // this is where std::setw and such would be used ...
+                    // if i knew how! printf would make it so much easier.
+                    << ": " << description
+                ;
+                return buf.str();
+            }
         };
 
     private:
@@ -153,7 +232,7 @@ class optionparser
                 throwError("short option can only be one character long");
             }
             // at this point, the syntax, names, etc., are fully parsed.
-            decl.shortname = shortname;
+            decl.shortname = shortname[0];
             decl.longname = longname;
             m_declarations.push_back(decl);
         }
@@ -195,12 +274,12 @@ class optionparser
                     {
                         /* get value by cutting nodash after eqpos */
                         value = nodash.substr(eqpos-1);
-                        decl.callback(value);
+                        decl.callback.invoke(value);
                     }
                 }
                 else
                 {
-                    decl.callback(std::string());
+                    decl.callback.invoke();
                 }
             }
             else
@@ -228,13 +307,13 @@ class optionparser
                         if(str.size() > 1)
                         {
                             ovalue = str.substr(1);
-                            decl.callback(ovalue);
+                            decl.callback.invoke(ovalue);
                             return;
                         }
                         else
                         {
                             std::stringstream b;
-                            b << "option '" << decl.shortname << "' expected a value";
+                            b << "option '-" << decl.shortname << "' expected a value";
                             throwError(b.str());
                         }
                     }
@@ -248,12 +327,12 @@ class optionparser
                         if(decl.needvalue)
                         {
                             std::stringstream b;
-                            b << "unexpected option '" << decl.shortname << "', requiring a value";
+                            b << "unexpected option '-" << decl.shortname << "', requiring a value";
                             throwError(b.str());
                         }
                         else
                         {
-                            decl.callback(std::string());
+                            decl.callback.invoke();
                         }
                     }
                 }
@@ -282,7 +361,7 @@ class optionparser
                         */
                         value = m_vargs[iref + 1];
                         iref++;
-                        decl.callback(value);
+                        decl.callback.invoke(value);
                     }
                     else
                     {
@@ -292,7 +371,7 @@ class optionparser
                 }
                 else
                 {
-                    decl.callback(std::string());
+                    decl.callback.invoke();
                 }
             }
             else
@@ -308,7 +387,7 @@ class optionparser
             int i;
             for(i=0; i<m_declarations.size(); i++)
             {
-                if(m_declarations[i].longname == name)
+                if(m_declarations[i].is(name))
                 {
                     decldest = m_declarations[i];
                     return true;
@@ -322,7 +401,7 @@ class optionparser
             int i;
             for(i=0; i<m_declarations.size(); i++)
             {
-                if(m_declarations[i].shortname[0] == name)
+                if(m_declarations[i].is(name))
                 {
                     decldest = m_declarations[i];
                     return true;
@@ -333,9 +412,9 @@ class optionparser
 
         void init()
         {
-            this->on("-h", "--help", "show this help", [&](auto)
+            this->on("-h", "--help", "show this help", [&]
             {
-                this->help(std::cout, m_vargs[0]);
+                this->help(std::cout);
                 std::exit(0);
             });
         }
@@ -357,9 +436,14 @@ class optionparser
             init();
         }
 
-        void on(const std::string& shortstr, const std::string& longstr, const std::string& desc, Callback fn)
+        void on(const std::string& shortstr, const std::string& longstr, const std::string& desc, CallbackNoValue fn)
         {
-            addDeclaration(shortstr, longstr, desc, fn);
+            addDeclaration(shortstr, longstr, desc, Callback{fn});
+        }
+
+        void on(const std::string& shortstr, const std::string& longstr, const std::string& desc, CallbackStrValue fn)
+        {
+            addDeclaration(shortstr, longstr, desc, Callback{fn});
         }
 
         std::stringstream& banner()
@@ -372,44 +456,31 @@ class optionparser
             return m_helptailbuf;
         }
 
-        std::string help(const std::string& progname)
+        std::string help()
         {
             std::stringstream buf;
-            return help(buf, progname).str();
+            return help(buf).str();
         }
 
         template<typename StreamT>
-        StreamT& help(StreamT& buf, const std::string& progname)
+        StreamT& help(StreamT& buf)
         {
             int i;
             buf << m_helpbannerbuf.str() << std::endl;
-            buf << "usage: " << progname << " ";
+            buf << "usage: ";
             for(i=0; i<m_declarations.size(); i++)
             {
-                auto decl = m_declarations[i];
-                buf << "[";
-                buf << "-" << decl.shortname << " / --" << decl.longname;  
-                if(decl.needvalue)
-                {
-                    buf << " <val>";
-                }
-                buf << "]";
+                buf << "[" << m_declarations[i].to_short_str() << "]";
                 if((i + 1) != m_declarations.size())
                 {
                     buf << " ";
                 }
             }
             buf << " <args ...>" << std::endl << std::endl;
-
             buf << "available options:" << std::endl;
             for(i=0; i<m_declarations.size(); i++)
             {
-                auto decl = m_declarations[i];
-                buf
-                    << "    -" << decl.shortname << " --" << decl.longname
-                    << (decl.needvalue ? " <val>" : "")
-                    << ": " << decl.description
-                << std::endl;
+                buf << m_declarations[i].to_long_str() << std::endl;
             }
             buf << m_helptailbuf.str() << std::endl;
             return buf;
