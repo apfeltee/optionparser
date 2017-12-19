@@ -40,6 +40,7 @@
 class optionparser
 {
     public:
+        using StopIfCallback   = std::function<bool(optionparser&)>; 
         using CallbackNoValue  = std::function<void()>;
         using CallbackStrValue = std::function<void(const std::string&)>;
         
@@ -116,21 +117,17 @@ class optionparser
             // the lambda/function to be called when this option is seen
             Callback callback;
 
-            Declaration()
-            {
-            }
-
-            bool is(char c) const
+            inline bool is(char c) const
             {
                 return (c == shortname);
             }
 
-            bool is(const std::string& s) const
+            inline bool is(const std::string& s) const
             {
                 return (s == longname);
             }
 
-            std::string to_short_str() const
+            inline std::string to_short_str() const
             {
                 std::stringstream buf;
                 buf
@@ -139,17 +136,16 @@ class optionparser
                 return buf.str();
             }
 
-            std::string to_long_str(int padsize=25) const
+            inline std::string to_long_str(int padsize=25) const
             {
-                std::stringstream buf;
-                buf
-                    << "    -" << shortname << (needvalue ? "<val>" : "")
+                std::stringstream tmp;
+                tmp
+                    << "-" << shortname << (needvalue ? "<val>" : "")
                     << ", "
-                    << " --" << longname << (needvalue ? "=<val>" : "")
-                    // this is where std::setw and such would be used ...
-                    // if i knew how! printf would make it so much easier.
-                    << ": " << description
+                    << "--" << longname << (needvalue ? "=<val>" : "")
                 ;
+                std::stringstream buf;
+                buf << "  " << tmp.str() << ": " << std::setw(padsize) << description;
                 return buf.str();
             }
         };
@@ -164,6 +160,9 @@ class optionparser
         // contains the option syntax declarations.
         std::vector<Declaration> m_declarations;
 
+        // stop_if callbacks
+        std::vector<StopIfCallback> m_stopif_funcs;
+
         // buffer for the banner (the text printed prior to the help text)
         std::stringstream m_helpbannerbuf;
 
@@ -174,9 +173,10 @@ class optionparser
         /*
         * todo: more meaningful exception classes
         */
+        template<typename ExClass=std::runtime_error>
         void throwError(const std::string& msg)
         {
-            throw std::runtime_error(msg);
+            throw ExClass(msg);
         }
 
         void addDeclaration(const std::string& shortstr, const std::string& longstr, const std::string& desc, Callback fn)
@@ -446,28 +446,26 @@ class optionparser
             addDeclaration(shortstr, longstr, desc, Callback{fn});
         }
 
-        std::stringstream& banner()
+        inline std::stringstream& banner()
         {
             return m_helpbannerbuf;
         }
 
-        std::stringstream& tail()
+        inline std::stringstream& tail()
         {
             return m_helptailbuf;
         }
 
-        std::string help()
+        inline std::string help() const
         {
             std::stringstream buf;
             return help(buf).str();
         }
 
         template<typename StreamT>
-        StreamT& help(StreamT& buf)
+        StreamT& help_declarations_short(StreamT& buf) const
         {
             int i;
-            buf << m_helpbannerbuf.str() << std::endl;
-            buf << "usage: ";
             for(i=0; i<m_declarations.size(); i++)
             {
                 buf << "[" << m_declarations[i].to_short_str() << "]";
@@ -476,24 +474,52 @@ class optionparser
                     buf << " ";
                 }
             }
-            buf << " <args ...>" << std::endl << std::endl;
-            buf << "available options:" << std::endl;
+            return buf;
+        }
+
+        template<typename StreamT>
+        StreamT& help_declarations_long(StreamT& buf) const
+        {
+            int i;
             for(i=0; i<m_declarations.size(); i++)
             {
                 buf << m_declarations[i].to_long_str() << std::endl;
             }
+            return buf;
+        }
+
+        template<typename StreamT>
+        StreamT& help(StreamT& buf) const
+        {
+            buf << m_helpbannerbuf.str() << std::endl;
+            buf << "usage: ";
+            help_declarations_short(buf);
+            buf << " <args ...>" << std::endl << std::endl;
+            buf << "available options:" << std::endl;
+            help_declarations_long(buf);
             buf << m_helptailbuf.str() << std::endl;
             return buf;
         }
 
-        std::vector<std::string> positional()
+        inline std::vector<std::string> positional() const
         {
             return m_positional;
+        }
+
+        inline size_t positional_size() const
+        {
+            return m_positional.size();
+        }
+
+        inline void stop_if(StopIfCallback cb)
+        {
+            m_stopif_funcs.push_back(cb);
         }
 
         bool parse()
         {
             int i;
+            int j;
             bool stopparsing;
             std::string nodash;
             stopparsing = false;
@@ -506,6 +532,14 @@ class optionparser
                 {
                     stopparsing = true;
                     continue;
+                }
+                for(auto iter=m_stopif_funcs.begin(); iter!=m_stopif_funcs.end(); iter++)
+                {
+                    if((*iter)(*this))
+                    {
+                        stopparsing = true;
+                        break;
+                    }
                 }
                 if(stopparsing)
                 {
