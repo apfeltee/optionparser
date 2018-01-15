@@ -12,7 +12,7 @@ int main(int argc, char* argv[])
 {
     int i;
     options opts;
-    optionparser prs;
+    OptionParser prs;
     prs.on("-v", "--verbose", "increase verbosity (try passing '-v' several times!)", [&]
     {
         opts.verbosity++;
