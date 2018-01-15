@@ -1,7 +1,7 @@
 
-## optionparser
+## OptionParser
 
-optionparser borrows the style of ruby's OptionParser, in that it
+OptionParser borrows the style of ruby's OptionParser, in that it
 uses lambdas to capture values.
 
 this makes it trivial to implement invocation of
@@ -11,20 +11,21 @@ map out any values.
 
 the only drawback is, that value conversion (strings to integers, etc) has to be done manually.
 
-errors, if any, are thrown during parsing in gnopt::parse(), so
-a try/catch block would be necessary. again, this is virtually identical
+errors, if any, are thrown during parsing in OptionParser::parse(), so
+a try/catch block would be necessary. This is virtually identical
 to how ruby's OptionParser does it.
 
 
 sample usage:
 
-    optionparser prs(argc, argv); // or optionparser(argc, argv, <index>) if argc starts at a different index
+    optionparser prs;
     prs.on("-o?", "--out=?", "set output file name", [&](const std::string& val)
     {
        myoutputfilename = val; 
     });
-    prs.parse();
-    // unparsed values can be retrieved through prs.opts(), which is a vector of strings.
+    // or parse(argc, argv, <index>) if argc starts at a different index
+    prs.parse(argc, arv);
+    // unparsed values can be retrieved through prs.positional(), which is a vector of strings.
 
 
 A more hands-on example is available in `test/main.cpp`.
