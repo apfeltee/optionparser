@@ -1,7 +1,18 @@
 #!/bin/bash
 
-# so sue me for being lazy
+function vexec
+{
+  echo "[$$] $@"
+  "$@"
+}
 
-for file in *.cpp; do
-  clang++ -std=c++14 -I.. -g3 -ggdb "$file" -o "${file%.*}"
+# so sue me for being lazy
+CXX="clang++"
+mkdir -p "./bin"
+for infile in *.cpp; do
+  base="$(basename "$infile")"
+  nocpp="${base%.*}"
+  exename="${nocpp}.exe"
+  outfile="bin/$exename"
+  vexec "$CXX" -std=c++17 -I../include -g3 -ggdb "$infile" -o "$outfile"
 done

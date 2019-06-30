@@ -1,6 +1,14 @@
 *.exe
 *.obj
 *.o
+*.ilk
+*.ll
+*.il
+*.ils
+*.ilc
+*.pdb
+*.mdb
+*.tdb
 *.stackdump
 *.dump
 *.dmp

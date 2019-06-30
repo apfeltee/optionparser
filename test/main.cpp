@@ -13,16 +13,21 @@ int main(int argc, char* argv[])
     int i;
     options opts;
     OptionParser prs;
-    prs.on("-v", "--verbose", "increase verbosity (try passing '-v' several times!)", [&]
+    prs.onUnknownOption([&](const std::string& v)
+    {
+        std::cerr << "unknown option '" << v << "'!" << std::endl;
+        return false;
+    });
+    prs.on({"-v", "--verbose"}, "increase verbosity (try passing '-v' several times!)", [&]
     {
         opts.verbosity++;
         std::cout << "** verbosity is now " << opts.verbosity << std::endl;
     });
-    prs.on({"-d", "--debug", "--toggledebug"}, "toggle debug mose", [&]
+    prs.on({"-d", "--debug", "--toggledebug"}, "toggle debug mode", [&]
     {
         std::cout << "** toggling debug mode" << std::endl;
     });
-    prs.on({"-o?", "/out:?", "--outputfile=?"}, "set outputfile", [&](const std::string& str)
+    prs.on({"-o?", "--outputfile=?"}, "set outputfile", [&](const std::string& str)
     {
         std::cout << "** outfile = '" << str << "'" << std::endl;
         opts.outfile = str;
