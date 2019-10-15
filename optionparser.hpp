@@ -113,6 +113,11 @@ class BasicOptionParser
             using Error::Error;
         };
 
+        struct IOError: Error
+        {
+            using Error::Error;
+        };
+
         class Value;
         using string             = std::basic_string<CharT>;
         using stringstream       = std::basic_stringstream<CharT>;
@@ -342,6 +347,44 @@ class BasicOptionParser
             }
 
             Declaration& alias(const std::vector<string>& opts);
+        };
+
+        class FileParser
+        {
+            public:
+            private:
+                std::istream* m_stream;
+                std::string m_filename;
+                bool m_mustclose;
+
+            private:
+                std::istream* openFile(const std::string& path)
+                {
+                    std::fstream* strm;
+                    strm = new std::fstream(path, std::ios::in | std::ios::binary);
+                    return strm;
+                }
+
+                void check()
+                {
+                    std::stringstream ss;
+                    if(!m_stream->good())
+                    {
+                        ss << "failed to open '" << m_filename << "' for reading";
+                        throw IOError(ss.str());
+                    }
+                }
+
+            public:
+                FileParser(std::istream* strm, const std::string& filename, bool mustclose=false):
+                    m_stream(strm), m_filename(filename), m_mustclose(mustclose)
+                {
+                    check();
+                }
+
+                FileParser(const std::string& path):
+                    FileParser(openFile(path), true)
+                {}
         };
 
         // wrap around isalnum to permit '?', '!', '#', etc.
