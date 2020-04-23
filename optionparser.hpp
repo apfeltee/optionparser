@@ -1,5 +1,5 @@
 /*
-* Copyright 2017 apfeltee (github.com/apfeltee)
+* Copyright 2017-2020 apfeltee (github.com/apfeltee)
 * 
 * Permission is hereby granted, free of charge, to any person obtaining a copy of
 * this software and associated documentation files (the "Software"), to deal in the
@@ -14,6 +14,8 @@
 * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
 * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*
+* (it's the MIT license)
 */
 
 #pragma once
@@ -28,18 +30,6 @@
 #include <stdexcept>
 #include <codecvt>
 #include <cctype>
-
-/*
-* only needed for c++clr P/invoke, etc
-* this should perhaps be better off in its own header
-*/
-#if defined(__cplusplus_cli)
-    #include <msclr/marshal_cppstd.h>
-    #include <cliext/list>
-    #using <System.dll>
-    #using <System.Reflection.dll>
-    #using <System.Collections.dll>
-#endif
 
 /* some features explicitly need minimum c++17 support */
 #if ((__cplusplus != 201402L) && (__cplusplus < 201402L)) && (defined(_MSC_VER) && ((_MSC_VER != 1914) || (_MSC_VER < 1914)))
@@ -77,9 +67,9 @@
 *   {
 *       setverbose = true;
 *   });
+*   prs.parse(argc, argv);
 *   // or parse(argc, argv, <index>) if argc starts at a different index
 *   // alternatively, parse() may also be used with an std::vector<string>
-*   prs.parse(argc, argv);
 *   // unparsed values can be retrieved through prs.positional(), which is a vector of strings.
 *
 * -----------------------------------------
@@ -97,11 +87,8 @@
 * same with stringstream.
 */
 
-
-
 template<typename CharT>
-class
-BasicOptionParser
+class BasicOptionParser
 {
     public:
         struct Error: std::runtime_error
@@ -139,6 +126,10 @@ BasicOptionParser
         using CallbackNoValue    = std::function<void()>;
         using CallbackWithValue  = std::function<void(const Value&)>;
 
+        /*
+        * this only used for native C++ - provides
+        * deparsing string value into integers, etc.
+        */
         class Value
         {
             private:
@@ -153,6 +144,7 @@ BasicOptionParser
                     obuf << str;
                     if(!(obuf >> dest))
                     {
+                        // is possible to figure out *why* a conversion may have failed?
                         throw ValueConversionError("lexical_convert failed");
                     }
                     return dest;
@@ -179,12 +171,17 @@ BasicOptionParser
                     return m_rawvalue.empty();
                 }
 
-                size_t size() const
+                inline size_t size() const
                 {
                     return m_rawvalue.size();
                 }
 
-                int operator[](int i) const
+                inline size_t length() const
+                {
+                    return size();
+                }
+
+                inline int operator[](int i) const
                 {
                     return m_rawvalue[i];
                 }
@@ -195,23 +192,24 @@ BasicOptionParser
         {
             CallbackWithValue real_callback = nullptr;
 
+            // default - no callback
             Callback()
             {
             }
 
+            // a callback accepting a value
             Callback(CallbackWithValue cb)
             {
-                //fprintf(stderr, "Callback::CallbackWithValue = %p\n", cb);
                 real_callback = cb;
             }
 
+            // a callback accepting no values
             Callback(CallbackNoValue cb)
             {
-                //fprintf(stderr, "Callback::CallbackNoValue = %p\n", cb);
                 /*
                 * this hack is needed to for clr, since it requires
                 * knowing what kind real_callback is - and there
-                * doesn't seem to be a sane way to testing.
+                * doesn't seem to be a sane way to test it.
                 */
                 real_callback = [cb](const Value& v)
                 {
@@ -374,6 +372,15 @@ BasicOptionParser
             Declaration& alias(const std::vector<string>& opts);
         };
 
+        /*
+        * big TODO: read options from a file, i.e.,
+        * if declaration is like on({"-v", "--verbose"}, ...), then
+        * FileParser would look for token "verbose", and process it as
+        * if passed on the command line.
+        * like a configuration file, basically.
+        * idea: add additional parameter to on() to explicitly specify
+        * configuration file variable name (i.e., on({"-v", "--verbose"}, "use-verbose", "...", []{...}))
+        */
         class FileParser
         {
             public:
@@ -401,6 +408,8 @@ BasicOptionParser
                 }
 
             public:
+                // allow using an already existing stream
+                // FileParser...(&alreadyexistingstream, "somefilename") ...
                 FileParser(std::istream* strm, const std::string& filename, bool mustclose=false):
                     m_stream(strm), m_filename(filename), m_mustclose(mustclose)
                 {
@@ -410,6 +419,14 @@ BasicOptionParser
                 FileParser(const std::string& path):
                     FileParser(openFile(path), true)
                 {}
+
+                ~FileParser()
+                {
+                    if(m_mustclose)
+                    {
+                        delete m_stream;
+                    }
+                }
         };
 
         // wrap around isalnum to permit '?', '!', '#', etc.
@@ -419,11 +436,13 @@ BasicOptionParser
             return (std::isalnum(int(c)) || (other.find_first_of(c) != string::npos));
         }
 
+        // is it a valid long option?
         static inline bool isvalidlongopt(const string& str)
         {
             return ((str[0] == '-') && (str[1] == '-'));
         }
 
+        // is it a valid DOS-style option?
         static inline bool isvaliddosopt(const string& str)
         {
             return ((str[0] == '/') && isalphanum(str[1]));
@@ -472,6 +491,9 @@ BasicOptionParser
             throw ExClass(msg);
         }
 
+        /*
+        * wraparound for invoke_on_unknown.
+        */
         inline bool invoke_on_unknown_prox(const string& optstr)
         {
             if(m_on_unknownoptfn == nullptr)
@@ -481,6 +503,9 @@ BasicOptionParser
             return m_on_unknownoptfn(optstr);
         }
 
+        /*
+        * called, when an unknown long option (i.e., '--foo') is encountered.
+        */
         inline bool invoke_on_unknown(const string& str)
         {
             string ostr;
@@ -489,6 +514,9 @@ BasicOptionParser
             return invoke_on_unknown_prox(ostr);
         }
 
+        /*
+        * called, when an unknown short option (i.e., '-c') is encountered.
+        */
         inline bool invoke_on_unknown(CharT opt)
         {
             string optstr;
@@ -497,6 +525,10 @@ BasicOptionParser
             return invoke_on_unknown_prox(optstr);
         }
 
+        /*
+        * wraps exception to either be thrown, or forwarded to invoke_on_unknown.
+        * useful for when exception are unavailable (i think? never encountered such a scenario).
+        */
         template<typename ExceptionT, typename ValType, typename... Args>
         inline void invoke_or_throw(const ValType& val, size_t& iref, size_t howmuch, Args&&... args)
         {
@@ -537,21 +569,6 @@ BasicOptionParser
         */
         inline Declaration& addDeclaration(const std::vector<string>& strs, const string& desc, Callback fn)
         {
-            /*
-            {
-                int i;
-                fprintf(stderr, "addDeclaration(strs={");
-                for(i=0; i<strs.size(); i++)
-                {
-                    fprintf(stderr, "\"%s\"", strs[i].c_str());
-                    if((i + 1) != strs.size())
-                    {
-                        fprintf(stderr, ", ");
-                    }
-                }
-                fprintf(stderr, "}, desc=\"%s\", fn=%p)\n", desc.c_str(), fn);
-            }
-            */
             size_t i;
             bool isgnu;
             bool hadlongopts;
@@ -648,6 +665,8 @@ BasicOptionParser
                 /*
                 * grammar (pseudo): "-" <char:alnum> ("?")
                 * also allows declaring numeric flags, i.e., "-0" (like grep, sort of)
+                * todo: allow numeric flags as a range - perhaps a wrapper function that
+                * auto-populates an array of options with the range of numbers?
                 */
                 else if((strs[i][0] == '-') && isalphanum(strs[i][1]))
                 {
@@ -672,20 +691,10 @@ BasicOptionParser
                 }
             }
             /*
-            if(hadlongopts || hadshortopts)
-            {
-                if(hadlongopts && (longwantvalue && (shortwantvalue == false)))
-                {
-                    shortwantvalue = true;
-                }
-            }
-            */
-            /*
             * ensure parsing state sanity: if one option requires a value, then
             * every other option must too.
-            * otherwise, it would create an impossible situation, and you wouldn't
-            * want to open a tear in the space-time continuum, now would you? :-)
-            * but, if you do, please let me know.
+            * TODO: optional mandatory value (silly sentence), like some
+            * clang options?
             */
             if(longwantvalue == true)
             {
@@ -740,6 +749,7 @@ BasicOptionParser
 
         /*
         * parse a short option with more than one character, OR combined options.
+        * sometimes refered to as GNU-style options.
         */
         inline void parse_multishort(const string& str, size_t& iref)
         {
@@ -848,8 +858,6 @@ BasicOptionParser
             }
         }
 
-
-
         /*
         * parse an argument string that matches the pattern of
         * a long option, extract its values (if any), and invoke callbacks.
@@ -880,7 +888,7 @@ BasicOptionParser
                 {
                     if(eqpos == string::npos)
                     {
-                        throwError<ValueNeededError>("longoption: option '", name, "' expected a value");
+                        throwError<ValueNeededError>("option '", name, "' expected a value");
                     }
                     else
                     {
@@ -988,6 +996,9 @@ BasicOptionParser
             return true;
         }
 
+        /*
+        * todo: cuddle short options that take no arguments
+        */
         template<typename StreamT>
         StreamT& help_declarations_short(StreamT& buf) const
         {
@@ -1032,7 +1043,10 @@ BasicOptionParser
         {
             m_vargs.push_back(v);
         }
-
+        /*
+        * realparse() is intended to be protected - but C++CLR won't let me touch its privates.
+        * bummer
+        */
         bool cliboilerplate_realparse()
         {
             return realparse();
@@ -1079,6 +1093,9 @@ BasicOptionParser
         *               for example, an option declared "-I?"  can be called multiple times
         *               to, for example, build a vector of values.
         */
+        /*
+        * param fn used to be a template, but code generators keep getting it wrong. so there.
+        */
         Declaration& on(const std::vector<string>& strs, const string& desc, CallbackWithValue fn)
         {
             return addDeclaration(strs, desc, Callback(fn));
@@ -1088,21 +1105,6 @@ BasicOptionParser
         {
             return addDeclaration(strs, desc, Callback(fn));
         }
-
-        /*
-        * a specialized version of on() that passes the value as-is
-        */
-        /*
-        Declaration& on(const std::vector<string>& strs, const string& desc, std::function<void(const std::string&)> fn)
-        {
-            return on(strs, desc, [&](const Value& v)
-            {
-                fn(v.str());
-            });
-        }
-        */
-        /* these are specialized versions of on(), that call Value::as() (except for string) */
-        
 
         /***
         * declare a callback that is called whenever an unknown/undeclared option flag
@@ -1146,7 +1148,7 @@ BasicOptionParser
         }
 
         /**
-        * returns a generated help text, based on the option declarations, and
+        * returns a nice help text, based on the option declarations, and
         * their descriptions, as well as the banner stream, and the tail stream.
         *
         * @param buf   a ostream-compatible stream (that defines operator<<()) to
@@ -1175,14 +1177,16 @@ BasicOptionParser
         }
 
         /**
-        * returns the positional (non-parsed) values.
-        * to merely check the size of positional values, use size() instead!
+        * returns the positional (non-parsed) values, that are leftover from parsing.
         */
         inline std::vector<string> positional() const
         {
             return m_positional;
         }
 
+        /**
+        * returns argument idx of the positional values.
+        */
         inline std::string positional(size_t idx) const
         {
             return m_positional[idx];
@@ -1222,6 +1226,12 @@ BasicOptionParser
         * then this would cause the parser to stop parsing after having seen "things.c", and the
         * positional values would yield {"things.c", "-I/something/else"}, which in turn
         * would NOT call the callback for the definition of "-I?", since it was not parsed.
+        * useful for programs that parse arguments similar to strace, i.e.:
+        *
+        *   mysillystrace -log.txt --what=io mysillyprogram --someoption=foo bar quux
+        *
+        * which, when used with stopIfSawPositional(), would mean the positional values
+        * would be {"mysillyprogram", "--someoption=foo", "bar", "quux"}.
         */
         inline void stopIfSawPositional()
         {
@@ -1238,7 +1248,11 @@ BasicOptionParser
         * @param argc    the argument vector count.
         * @param argv    the argument vector values.
         * @param begin   the index at which to begin collecting values.
-        *                there is usually no reason to specify this explicitly.
+        *                there is usually no reason to specify this explicitly,
+        *                unless your operating system populates argc/argv in a
+        *                odd non-standard way.
+        * @returns true if parsing succeeded. only really usable when exceptions
+        *          are disabled.
         */
         bool parse(int argc, char** argv, int begin=1)
         {
@@ -1264,117 +1278,8 @@ BasicOptionParser
 
 };
 
-#if defined(__cplusplus_cli)
-using namespace System;
-using namespace System::Reflection;
-using namespace System::Runtime::InteropServices;
-using namespace System::Collections::Generic;
-
-namespace Guts
-{
-    template<typename ListT>
-    static void cliarrayToVector(ListT^ args, size_t len, std::vector<std::string>& dest)
-    {
-        int i;
-        msclr::interop::marshal_context ctx;
-        for(i=0; i<len; i++)
-        {
-            dest.push_back(ctx.marshal_as<std::string>(args[i]));
-        }
-    }
-}
-
-class ThinOptionWrapper
-{
-    public:
-        using BaseType = BasicOptionParser<char>;
-
-    private:
-        BaseType* m_ptr;
-    
-    public:
-        ThinOptionWrapper(BaseType* p): m_ptr(p)
-        {
-        }
-
-        template<typename FnType>
-        void wrap_on(cli::array<System::String^>^ strs, System::String^ desc, FnType^ fn)
-        {
-            std::vector<std::string> vec;
-            msclr::interop::marshal_context ctx;
-            Guts::cliarrayToVector(strs, strs->Length, vec);
-            gcroot<FnType^> captured(fn);
-            GC::KeepAlive(captured);
-            m_ptr->on(vec, ctx.marshal_as<std::string>(desc), [captured](const BaseType::Value& v)
-            {
-                std::cerr << "pushed lambda. now what?" << std::endl;
-                auto str = gcnew System::String(v.str().c_str());
-                captured->Invoke(str);
-            });
-        }
-        
-};
-
-public ref class OptionParser
-{
-    public:
-        using BaseType = BasicOptionParser<char>;
-        delegate void ClrCallback(System::String^);
-
-    private:
-        BaseType* m_prs;
-        ThinOptionWrapper* m_thin;
-
-    private:
-        void createme()
-        {
-            std::cerr << "OptionParser init" << std::endl;
-            m_prs = new BaseType();
-            m_thin = new ThinOptionWrapper(m_prs);
-        }
-
-        void destroyme()
-        {
-            std::cerr << "OptionParser fini" << std::endl;
-            delete m_prs;
-            delete m_thin;
-        }
-
-
-    public:
-        OptionParser()
-        {
-            createme();
-        }
-
-        ~OptionParser()
-        {
-            destroyme();
-        }
-
-        void on(cli::array<System::String^>^ strs, System::String^ desc, ClrCallback^ fn)
-        {
-            m_thin->wrap_on(strs, desc, fn);
-        }
-
-        /*
-        * this hack is only used for managed c++.
-        * i've tested, and it "works" - but C++CLR guts are ***very*** poorly
-        * documented, especially marshalling.
-        * so, it works, but it might also not.
-        */
-        bool  parse(cli::array<System::String^>^ args)
-        {
-            int i;
-            msclr::interop::marshal_context ctx;
-            for(i=0; i<args->Length; i++)
-            {
-                m_prs->cliboilerplate_pushvarg(ctx.marshal_as<std::string>(args[i]));
-            }
-            return m_prs->cliboilerplate_realparse();
-        }
-};
-#else
+/* in c++clr mode, OptionParser is defined in wrap.cpp */
+#if !defined(__cplusplus_cli)
 using OptionParser = BasicOptionParser<char>;
 #endif
 
