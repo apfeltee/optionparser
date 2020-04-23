@@ -28,8 +28,17 @@
 #include <stdexcept>
 #include <codecvt>
 #include <cctype>
+
+/*
+* only needed for c++clr P/invoke, etc
+* this should perhaps be better off in its own header
+*/
 #if defined(__cplusplus_cli)
     #include <msclr/marshal_cppstd.h>
+    #include <cliext/list>
+    #using <System.dll>
+    #using <System.Reflection.dll>
+    #using <System.Collections.dll>
 #endif
 
 /* some features explicitly need minimum c++17 support */
@@ -87,8 +96,12 @@
 * note: bare-word `string` is not a typo, but typedef'd to std::basic_string!
 * same with stringstream.
 */
+
+
+
 template<typename CharT>
-class BasicOptionParser
+class
+BasicOptionParser
 {
     public:
         struct Error: std::runtime_error
@@ -180,8 +193,7 @@ class BasicOptionParser
         // some kind of bad variant type. or call it a hack.
         struct Callback
         {
-            CallbackNoValue real_noval = nullptr;
-            CallbackWithValue real_strval = nullptr;
+            CallbackWithValue real_callback = nullptr;
 
             Callback()
             {
@@ -189,30 +201,43 @@ class BasicOptionParser
 
             Callback(CallbackWithValue cb)
             {
-                real_strval = cb;
+                //fprintf(stderr, "Callback::CallbackWithValue = %p\n", cb);
+                real_callback = cb;
             }
 
             Callback(CallbackNoValue cb)
             {
-                real_noval = cb;
+                //fprintf(stderr, "Callback::CallbackNoValue = %p\n", cb);
+                /*
+                * this hack is needed to for clr, since it requires
+                * knowing what kind real_callback is - and there
+                * doesn't seem to be a sane way to testing.
+                */
+                real_callback = [cb](const Value& v)
+                {
+                    (void)v;
+                    return cb();
+                };
             }
 
-            void invoke() const
+            void check()
             {
-                if(real_noval == nullptr)
+                if(real_callback == nullptr)
                 {
-                    throw std::runtime_error("real_noval is NULL");
+                    throw std::runtime_error("real_callback is NULL");
                 }
-                return real_noval();
+            }
+
+            void invoke()
+            {
+                check();
+                return real_callback(std::string());
             }
 
             void invoke(const string& s)
             {
-                if(real_strval == nullptr)
-                {
-                    throw std::runtime_error("real_strval is NULL");
-                }
-                return real_strval(s);
+                check();
+                return real_callback(s);
             }
         };
 
@@ -404,7 +429,7 @@ class BasicOptionParser
             return ((str[0] == '/') && isalphanum(str[1]));
         }
 
-    private:
+    protected:
         // contains the argc/argv.
         std::vector<string> m_vargs;
 
@@ -430,9 +455,12 @@ class BasicOptionParser
         // a handler for unknown/errornous options
         UnknownOptCallback m_on_unknownoptfn;
 
-    private:
+    protected:
         /*
         * todo: more meaningful exception classes
+        * this function is also meant as a wrapper for situations
+        * where a C++ compiler doesn't allow exceptions (for any reason).
+        * needs to be ifdef'd, for those cases.
         */
         template<typename ExClass, typename... Args>
         void throwError(Args&&... args)
@@ -509,6 +537,21 @@ class BasicOptionParser
         */
         inline Declaration& addDeclaration(const std::vector<string>& strs, const string& desc, Callback fn)
         {
+            /*
+            {
+                int i;
+                fprintf(stderr, "addDeclaration(strs={");
+                for(i=0; i<strs.size(); i++)
+                {
+                    fprintf(stderr, "\"%s\"", strs[i].c_str());
+                    if((i + 1) != strs.size())
+                    {
+                        fprintf(stderr, ", ");
+                    }
+                }
+                fprintf(stderr, "}, desc=\"%s\", fn=%p)\n", desc.c_str(), fn);
+            }
+            */
             size_t i;
             bool isgnu;
             bool hadlongopts;
@@ -983,6 +1026,19 @@ class BasicOptionParser
             }
         }
 
+    #if defined(__cplusplus_cli)
+    public:
+        void cliboilerplate_pushvarg(const string& v)
+        {
+            m_vargs.push_back(v);
+        }
+
+        bool cliboilerplate_realparse()
+        {
+            return realparse();
+        }
+    #endif
+
     public:
         /**
         * initializes OptionParser().
@@ -1023,26 +1079,14 @@ class BasicOptionParser
         *               for example, an option declared "-I?"  can be called multiple times
         *               to, for example, build a vector of values.
         */
-        template<typename FnType>
-        Declaration& on(const std::vector<string>& strs, const string& desc, FnType fn)
+        Declaration& on(const std::vector<string>& strs, const string& desc, CallbackWithValue fn)
         {
-            return addDeclaration(strs, desc, Callback{fn});
+            return addDeclaration(strs, desc, Callback(fn));
         }
 
-        /**
-        * same as on(std::vector<> ...), but provides backwards compatibility to
-        * a previous version of OptionParser() which did not have variable length
-        * options.
-        * ##################
-        * ### DEPRECATED ###
-        * ##################
-        */
-        
-        template<typename FnType>
-        [[deprecated("use on<T>(const std::vector&, const string&, T)")]]
-        Declaration& on(const string& shortstr, const string& longstr, const string& desc, FnType fn)
+        Declaration& on(const std::vector<string>& strs, const string& desc, CallbackNoValue fn)
         {
-            return addDeclaration(std::vector<string>{shortstr, longstr}, desc, Callback{fn});
+            return addDeclaration(strs, desc, Callback(fn));
         }
 
         /*
@@ -1199,6 +1243,7 @@ class BasicOptionParser
         bool parse(int argc, char** argv, int begin=1)
         {
             int i;
+            m_vargs.reserve(argc + 1);
             for(i=begin; i<argc; i++)
             {
                 m_vargs.push_back(argv[i]);
@@ -1217,26 +1262,120 @@ class BasicOptionParser
             return realparse();
         }
 
-    #if defined(__cplusplus_cli)
+};
+
+#if defined(__cplusplus_cli)
+using namespace System;
+using namespace System::Reflection;
+using namespace System::Runtime::InteropServices;
+using namespace System::Collections::Generic;
+
+namespace Guts
+{
+    template<typename ListT>
+    static void cliarrayToVector(ListT^ args, size_t len, std::vector<std::string>& dest)
+    {
+        int i;
+        msclr::interop::marshal_context ctx;
+        for(i=0; i<len; i++)
+        {
+            dest.push_back(ctx.marshal_as<std::string>(args[i]));
+        }
+    }
+}
+
+class ThinOptionWrapper
+{
+    public:
+        using BaseType = BasicOptionParser<char>;
+
+    private:
+        BaseType* m_ptr;
+    
+    public:
+        ThinOptionWrapper(BaseType* p): m_ptr(p)
+        {
+        }
+
+        template<typename FnType>
+        void wrap_on(cli::array<System::String^>^ strs, System::String^ desc, FnType^ fn)
+        {
+            std::vector<std::string> vec;
+            msclr::interop::marshal_context ctx;
+            Guts::cliarrayToVector(strs, strs->Length, vec);
+            gcroot<FnType^> captured(fn);
+            GC::KeepAlive(captured);
+            m_ptr->on(vec, ctx.marshal_as<std::string>(desc), [captured](const BaseType::Value& v)
+            {
+                std::cerr << "pushed lambda. now what?" << std::endl;
+                auto str = gcnew System::String(v.str().c_str());
+                captured->Invoke(str);
+            });
+        }
+        
+};
+
+public ref class OptionParser
+{
+    public:
+        using BaseType = BasicOptionParser<char>;
+        delegate void ClrCallback(System::String^);
+
+    private:
+        BaseType* m_prs;
+        ThinOptionWrapper* m_thin;
+
+    private:
+        void createme()
+        {
+            std::cerr << "OptionParser init" << std::endl;
+            m_prs = new BaseType();
+            m_thin = new ThinOptionWrapper(m_prs);
+        }
+
+        void destroyme()
+        {
+            std::cerr << "OptionParser fini" << std::endl;
+            delete m_prs;
+            delete m_thin;
+        }
+
+
+    public:
+        OptionParser()
+        {
+            createme();
+        }
+
+        ~OptionParser()
+        {
+            destroyme();
+        }
+
+        void on(cli::array<System::String^>^ strs, System::String^ desc, ClrCallback^ fn)
+        {
+            m_thin->wrap_on(strs, desc, fn);
+        }
+
         /*
         * this hack is only used for managed c++.
         * i've tested, and it "works" - but C++CLR guts are ***very*** poorly
         * documented, especially marshalling.
         * so, it works, but it might also not.
         */
-        bool parse(cli::array<System::String^>^ args)
+        bool  parse(cli::array<System::String^>^ args)
         {
             int i;
             msclr::interop::marshal_context ctx;
             for(i=0; i<args->Length; i++)
             {
-                m_vargs.push_back(ctx.marshal_as<string>(args[i]));
+                m_prs->cliboilerplate_pushvarg(ctx.marshal_as<std::string>(args[i]));
             }
-            return realparse();
+            return m_prs->cliboilerplate_realparse();
         }
-    #endif
 };
-
+#else
 using OptionParser = BasicOptionParser<char>;
+#endif
 
 // that's all, folks!
