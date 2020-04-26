@@ -36,8 +36,14 @@ A c++14 capable compiler. Recent versions of gcc, clang, and Visual Studio will 
 
 ### licensing
 
-optionparser is made available under the terms of the MIT/X11 License.  
-A full copy of the license text is available in the file `LICENSE`.
+Optionparser is made available under the terms of the MIT/X11 License.  
+A full copy of the license text is available in the file `LICENSE`, or the head of `optionparser.hpp`.
 
 
+### examples?
 
+I'm using OptionParser in the following programs:
+
+    - (https://github.com/apfeltee/bits)[bits], which is a text transformation utility.
+    - (https://github.com/apfeltee/countext)[countext], which prints statistics about file extensions in a directory, or file.
+    - (https://github.com/apfeltee/rmcpp)[rmcpp], which removes comments.
