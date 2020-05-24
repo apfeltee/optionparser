@@ -1,5 +1,6 @@
 
 #include <iostream>
+#include <fstream>
 #include "optionparser.hpp"
 
 struct options
@@ -10,53 +11,60 @@ struct options
 
 int main(int argc, char* argv[])
 {
-    int i;
+    size_t i;
     options opts;
     OptionParser prs;
-    prs.onUnknownOption([&](const std::string& v)
-    {
-        std::cerr << "unknown option '" << v << "'!" << std::endl;
-        return false;
-    });
-    prs.on({"-v", "--verbose"}, "increase verbosity (try passing '-v' several times!)", [&]
-    {
-        opts.verbosity++;
-        std::cout << "** verbosity is now " << opts.verbosity << std::endl;
-    });
-    prs.on({"-d", "--debug", "--toggledebug"}, "toggle debug mode", [&]
-    {
-        std::cout << "** toggling debug mode" << std::endl;
-    });
-    prs.on({"-o?", "--outputfile=?"}, "set outputfile", [&](const std::string& str)
-    {
-        std::cout << "** outfile = '" << str << "'" << std::endl;
-        opts.outfile = str;
-    });
-    prs.on({"-I?", "-A?", "--include=?"}, "add a path to include searchpath", [&](const std::string& str)
-    {
-        std::cout << "** include: '" << str << "'" << std::endl;
-    });
     try
     {
-        prs.parse(argc, argv);
-        auto pos = prs.positional();
-        if((pos.size() == 0) && (argc == 1))
+        prs.onUnknownOption([&](const auto& v)
         {
-            prs.help(std::cout);
-            return 1;
-        }
-        else
+            std::cerr << "unknown option '" << v << "'!" << std::endl;
+            return false;
+        });
+        prs.on({"-v", "--verbose"}, "increase verbosity (try passing '-v' several times!)", [&]
         {
-            std::cout << "** positional:" << std::endl;
-            for(i=0; i<pos.size(); i++)
+            opts.verbosity++;
+            std::cout << "** verbosity is now " << opts.verbosity << std::endl;
+        });
+        prs.on({"-d", "--debug", "--toggledebug"}, "toggle debug mode", [&]
+        {
+            std::cout << "** toggling debug mode" << std::endl;
+        });
+        prs.on({"-o<file>", "--outputfile=<file>"}, "set outputfile", [&](const auto& v)
+        {
+            std::cout << "** outfile = '" << v.str() << "'" << std::endl;
+            opts.outfile = v.str();
+        });
+        prs.on({"-I<path>", "-A<path>", "--include=<path>"}, "add a path to include searchpath", [&](const auto& v)
+        {
+            std::cout << "** include: '" << v.str() << "'" << std::endl;
+        });
+        try
+        {
+            prs.parse(argc, argv);
+            auto pos = prs.positional();
+            if((pos.size() == 0) && (argc == 1))
             {
-                std::cout << "  [" << i << "] " << std::quoted(pos[i]) << std::endl;
+                prs.help(std::cout);
+                return 1;
             }
+            else
+            {
+                std::cout << "** positional:" << std::endl;
+                for(i=0; i<pos.size(); i++)
+                {
+                    std::cout << "  [" << i << "] " << std::quoted(pos[i]) << std::endl;
+                }
+            }
+        }
+        catch(std::runtime_error& ex)
+        {
+            std::cerr << "parse error: " << ex.what() << std::endl;
         }
     }
     catch(std::runtime_error& ex)
     {
-        std::cerr << "error: " << ex.what() << std::endl;
+        std::cerr << "setting error: " << ex.what() << std::endl;
     }
     return 0;
 }

@@ -28,7 +28,6 @@
 #include <functional>
 #include <exception>
 #include <stdexcept>
-#include <codecvt>
 #include <cctype>
 
 /* some features explicitly need minimum c++17 support */
@@ -270,6 +269,9 @@ class BasicOptionParser
             // the long opt syntax.
             bool needvalue = false;
 
+            // whether this decl has a placeholder
+            bool hasplaceholder = false;
+
             // the name of the short option (i.e., "o")
             std::vector<CharT> shortnames;
 
@@ -278,6 +280,9 @@ class BasicOptionParser
 
             // the description (no special syntax!) (i.e., "set output file name")
             string description;
+
+            // name of the placeholder (i.e., "--foo=<something>" = "something")
+            string placeholder = "val";
 
             // the lambda/function to be called when this option is seen
             Callback callback;
@@ -319,9 +324,11 @@ class BasicOptionParser
                 stringstream buf;
                 for(i=0; i<shortnames.size(); i++)
                 {
-                    buf
-                        << "-" << shortnames[i] << (needvalue ? "<val>" : "")
-                    ;
+                    buf << "-" << shortnames[i];
+                    if(needvalue)
+                    {
+                        buf << "<" << placeholder << ">";
+                    }
                     if((i + 1) != shortnames.size())
                     {
                         buf << " ";
@@ -343,11 +350,19 @@ class BasicOptionParser
                 {
                     if(longnames[i].isgnu)
                     {
-                        tmp << "--" << longnames[i].name << (needvalue ? "=<val>" : "");
+                        tmp << "--" << longnames[i].name;
+                        if(needvalue)
+                        {
+                            tmp << "=<" << placeholder << ">";
+                        }
                     }
                     else
                     {
-                        tmp << "/" << longnames[i].name << (needvalue ? ":<val>" : "");
+                        tmp << "/" << longnames[i].name;
+                        if(needvalue)
+                        {
+                            tmp << ":<" << placeholder << ">";
+                        }
                     }
                     if((i + 1) < longnames.size())
                     {
@@ -544,6 +559,26 @@ class BasicOptionParser
             }
         }
 
+        bool hasplaceholder(const std::string& optpat, std::string& dest, size_t& subend, bool islong)
+        {
+            size_t ibegin;
+            char end;
+            (void)islong;
+            end = *(optpat.end() - 1);
+            if(end == '>')
+            {
+                ibegin = optpat.find_first_of('<');
+                if(ibegin < optpat.size())
+                {
+                    subend = ibegin - 3;
+                    // substr behaves weirdly. why can't C++ just be normal?
+                    dest = std::string(optpat.begin() + (ibegin+1), optpat.end() - 1);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /*
         * properly deparse declarations into Declaration types.
         * expected grammar must fit in either of these:
@@ -551,25 +586,27 @@ class BasicOptionParser
         * short option (getopt style):
         *   # -v
         *   # -o?
-        *   "-" <char:alnum> ("?")
+        *   "-" <char> ( "?" | ( "<" <string> ">" )
         *
         * long option (GNU style):
         *   # --verbose
         *   # --outputfile=?
-        *   "--" <string:alnum> ("=?")
+        *   "--" <string> ( "=?" | ( "=<" <string> ">" ) )
         *
         * long option (DOS style):
         *   # /?
         *   # /v
         *   # /verbose
         *   # /out:?
-        *   "/" <string:alnum> (":?")
+        *   "/" <string> ( ":?" | ( ":<" <string> ">" )
         *
         * 'alnum' is alphanumeric, i.e., alphabet (uppercase & lowercase) + digits.
         */
         inline Declaration& addDeclaration(const std::vector<string>& strs, const string& desc, Callback fn)
         {
             size_t i;
+            size_t subend;
+            bool hph;
             bool isgnu;
             bool hadlongopts;
             bool hadshortopts;
@@ -579,6 +616,7 @@ class BasicOptionParser
             string longstr;
             string shortstr;
             string longname;
+            string placeholder;
             CharT shortname;
             CharT shortbegin;
             CharT shortend;
@@ -631,10 +669,21 @@ class BasicOptionParser
                     isgnu = ((longbegin1 == '-') && (longbegin2 == '-'));
                     if(isgnu)
                     {
-                        longwantvalue = ((longeq == '=') && (longend == '?'));
+                        /* "--foo=?" = $length - len("=?") */
+                        subend = longstr.size() - 4;
+                        /* allow on({"--foo=<name>"})*/
+                        longwantvalue = (
+                            ((longeq == '=') && (longend == '?')) ||
+                            (hph = hasplaceholder(longstr, placeholder, subend, true))
+                        );
                         if(longwantvalue)
                         {
-                            longname = longstr.substr(2).substr(0, longstr.size() - 4);
+                            longname = longstr.substr(2).substr(0, subend);
+                            if(hph)
+                            {
+                                decl->hasplaceholder = true;
+                                decl->placeholder = placeholder;
+                            }
                         }
                         else
                         {
@@ -644,10 +693,20 @@ class BasicOptionParser
                     // ms-style options can be '/foo:bar', but also '-foo:bar'
                     else if((longbegin1 == '/') || (longbegin1 == '-'))
                     {
-                        longwantvalue = ((longeq == ':') && (longend == '?'));
+                        // "/foo:?" = $length - len(":?")
+                        subend = longstr.size() - 3;
+                        longwantvalue = (
+                            ((longeq == ':') && (longend == '?')) ||
+                            (hph=hasplaceholder(longstr, placeholder, subend, false))
+                        );
                         if(longwantvalue)
                         {
-                            longname = longstr.substr(1).substr(0, longstr.size() - 3);
+                            longname = longstr.substr(1).substr(0, subend);
+                            if(hph)
+                            {
+                                decl->hasplaceholder = true;
+                                decl->placeholder = placeholder;
+                            }
                         }
                         else
                         {
@@ -682,7 +741,14 @@ class BasicOptionParser
                     shortend = *(shortstr.end() - 1);
                     // permits declaring '-?'
                     shortwantvalue = ((shortend == '?') && (shortend != shortname));
+                    hph = hasplaceholder(shortstr, placeholder, subend, false);
                     decl->shortnames.push_back(shortname);
+                    if(hph)
+                    {
+                        shortwantvalue = true;
+                        decl->hasplaceholder = true;
+                        decl->placeholder = placeholder;
+                    }
                 }
                 else
                 {
@@ -1275,11 +1341,10 @@ class BasicOptionParser
             m_vargs = args;
             return realparse();
         }
-
 };
 
 /* in c++clr mode, OptionParser is defined in wrap.cpp */
-#if !defined(__cplusplus_cli)
+#if !defined(_OPTIONPARSER_CLRMODE)
 using OptionParser = BasicOptionParser<char>;
 #endif
 
